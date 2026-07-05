@@ -147,17 +147,23 @@ func applyContextVariable(ctx context.Context, data map[string]any, vars map[str
 		case map[string]any:
 			res[k] = applyContextVariable(ctx, v, vars)
 		case []any:
+			list := make([]any, len(v))
 			for i, vv := range v {
-				switch vv := vv.(type) {
-				case map[string]any:
-					v[i] = applyContextVariable(ctx, vv, vars)
+				if m, ok := vv.(map[string]any); ok {
+					list[i] = applyContextVariable(ctx, m, vars)
+					continue
 				}
+				list[i] = vv
 			}
+			res[k] = list
 		case string:
 			if val, ok := vars[v]; ok {
 				res[k] = val
 				continue
 			}
+			res[k] = v
+		default:
+			res[k] = v
 		}
 	}
 
