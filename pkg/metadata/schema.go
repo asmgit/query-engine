@@ -155,6 +155,9 @@ func typeResolver(ctx context.Context, provider catalog.Provider, typeDef *ast.T
 					continue
 				}
 				if p := perm.PermissionsFromCtx(ctx); p != nil {
+					// Hidden fields are omitted from introspection but stay queryable;
+					// disabled fields are inaccessible and must also be omitted, so the
+					// introspected schema matches the role's actual access.
 					if _, ok := p.Visible(def.Name, f.Name); !ok {
 						continue
 					}
@@ -162,6 +165,9 @@ func typeResolver(ctx context.Context, provider catalog.Provider, typeDef *ast.T
 					// scalar return types can never name a data object, so skip
 					// the permission scan for them
 					if tn := f.Type.Name(); !sdl.IsScalarType(tn) && p.DataObjectHidden(tn) {
+						continue
+					}
+					if _, ok := p.Enabled(def.Name, f.Name); !ok {
 						continue
 					}
 				}
