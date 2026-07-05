@@ -155,3 +155,44 @@ func TestJwtProvider_Authenticate(t *testing.T) {
 		})
 	}
 }
+
+func TestJwtProvider_CustomClaims(t *testing.T) {
+	config := &JwtConfig{
+		Issuer:    "test-issuer",
+		PublicKey: rsaPubKey,
+		Claims:    UserAuthInfoConfig{Role: "role", UserId: "sub", UserName: "name"},
+	}
+	claims := jwt.MapClaims{
+		"sub":           "user1",
+		"name":          "User One",
+		"role":          "landlord_admin",
+		"agency_id":     "42",
+		"department_id": "sales",
+		"exp":           time.Now().Add(time.Hour).Unix(),
+	}
+
+	token, err := GenerateToken(rsaKey, claims)
+	if err != nil {
+		t.Fatalf("failed to generate token: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	provider, err := NewJwt(config)
+	if err != nil {
+		t.Fatalf("failed to create JwtProvider: %v", err)
+	}
+
+	authInfo, err := provider.Authenticate(req)
+	if err != nil {
+		t.Fatalf("Authenticate() error = %v", err)
+	}
+
+	if got := authInfo.Claims["agency_id"]; got != "42" {
+		t.Errorf("Claims[agency_id] = %v, want 42", got)
+	}
+	if got := authInfo.Claims["department_id"]; got != "sales" {
+		t.Errorf("Claims[department_id] = %v, want sales", got)
+	}
+}

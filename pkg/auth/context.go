@@ -11,6 +11,8 @@ type AuthInfo struct {
 	AuthProvider string
 	Token        string
 
+	Claims map[string]any
+
 	// ImpersonatedBy holds the original admin identity when this request
 	// is running under impersonation. Nil means no impersonation.
 	ImpersonatedBy *AuthInfo
