@@ -107,28 +107,49 @@ func (r *RolePermissions) DataArgument(ctx context.Context, object, field string
 	return nil
 }
 
+// checkObjectField resolves the effective permission for (object, field) by
+// most-specific-match, per the documented precedence:
+//
+//	exact (object, field) > (object, "*") > ("*", field) > ("*", "*") > open by default
+//
+// A more specific rule always overrides a less specific one, regardless of the
+// order rows are stored in.
 func (r *RolePermissions) checkObjectField(object, field string, toVisible bool) (*Permission, bool) {
 	if r.Disabled {
 		return nil, false
 	}
-	allObjects := true
-	allFields := true
-	for _, p := range r.Permissions {
-		out := p.Disabled
-		if toVisible {
-			out = p.Hidden
-		}
+	var best *Permission
+	bestRank := -1
+	for i := range r.Permissions {
+		p := &r.Permissions[i]
+		rank := -1
 		switch {
-		case p.Object == "*" && p.Field == "*":
-			allObjects = !out
-			allFields = !out
-		case p.Object == "*" && p.Field == field:
-			allFields = !out
 		case p.Object == object && p.Field == field:
-			return &p, !out
+			rank = 3
+		case p.Object == object && p.Field == "*":
+			rank = 2
+		case p.Object == "*" && p.Field == field:
+			rank = 1
+		case p.Object == "*" && p.Field == "*":
+			rank = 0
+		}
+		if rank > bestRank {
+			bestRank, best = rank, p
 		}
 	}
-	return nil, allFields && allObjects
+	if best == nil {
+		return nil, true
+	}
+	out := best.Disabled
+	if toVisible {
+		out = best.Hidden
+	}
+	// Only an exact match carries a permission (its filter/data) back to the
+	// caller; wildcard matches gate access without a concrete rule payload.
+	if bestRank == 3 {
+		return best, !out
+	}
+	return nil, !out
 }
 
 func applyContextVariable(ctx context.Context, data map[string]any, vars map[string]any) map[string]any {
