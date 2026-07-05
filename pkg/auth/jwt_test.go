@@ -2,6 +2,7 @@ package auth
 
 import (
 	_ "embed"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -194,5 +195,24 @@ func TestJwtProvider_CustomClaims(t *testing.T) {
 	}
 	if got := authInfo.Claims["department_id"]; got != "sales" {
 		t.Errorf("Claims[department_id] = %v, want sales", got)
+	}
+}
+
+func TestJwtProvider_CookieAbsentSkips(t *testing.T) {
+	config := &JwtConfig{
+		Issuer:     "test-issuer",
+		PublicKey:  rsaPubKey,
+		CookieName: "session",
+		Claims:     UserAuthInfoConfig{Role: "role", UserId: "sub", UserName: "name"},
+	}
+	provider, err := NewJwt(config)
+	if err != nil {
+		t.Fatalf("failed to create JwtProvider: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/", nil)
+
+	if _, err := provider.Authenticate(req); !errors.Is(err, ErrSkipAuth) {
+		t.Errorf("Authenticate() with no token and cookie configured = %v, want ErrSkipAuth", err)
 	}
 }
