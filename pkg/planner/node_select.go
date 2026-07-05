@@ -370,10 +370,14 @@ func selectDataObjectNode(ctx context.Context, defs base.DefinitionsSource, plan
 		nodes = append(nodes, paramNodes...)
 	}
 	if len(joinCatalogNodes) != 0 || len(joinGeneralNodes) != 0 {
-		// if there are joins, we push down only where and vector search nodes
+		// if there are joins, we push down only where, permission filter and vector search nodes
 		whereNode := paramNodes.ForName("where")
 		if whereNode != nil {
 			nodes = append(nodes, whereNode)
+		}
+		permNode := paramNodes.ForName("permission_filter")
+		if permNode != nil {
+			nodes = append(nodes, permNode)
 		}
 		vectorSearchNode := paramNodes.ForName(vectorDistanceNodeName)
 		if vectorSearchNode != nil {
