@@ -118,6 +118,11 @@ func (p *JwtProvider) Authenticate(r *http.Request) (*AuthInfo, error) {
 		}
 	}
 
+	rawClaims := make(map[string]any, len(claims))
+	for k, v := range claims {
+		rawClaims[k] = v
+	}
+
 	return &AuthInfo{
 		Role:         role,
 		UserId:       userId,
@@ -125,6 +130,7 @@ func (p *JwtProvider) Authenticate(r *http.Request) (*AuthInfo, error) {
 		AuthType:     "jwt",
 		AuthProvider: p.c.Issuer,
 		Token:        t.Raw,
+		Claims:       rawClaims,
 	}, nil
 }
 
