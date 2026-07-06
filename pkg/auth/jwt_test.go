@@ -2,28 +2,82 @@ package auth
 
 import (
 	_ "embed"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	yaml "gopkg.in/yaml.v2"
 )
 
 var (
 	//go:embed internal/fixture/rsa
 	rsaKey []byte
 	//go:embed internal/fixture/rsa.pub
-	rsaPubKey []byte
+	rsaPubKey string
 	//go:embed internal/fixture/ed25519
 	ed25519Key []byte
 	//go:embed internal/fixture/ed25519.pub
-	ed25519PubKey []byte
+	ed25519PubKey string
 	//go:embed internal/fixture/ecdsa
 	ecdsaKey []byte
 	//go:embed internal/fixture/ecdsa.pub
-	ecdsaPubKey []byte
+	ecdsaPubKey string
 )
+
+// Regression: a PEM public key must parse from a plain YAML block scalar.
+// PublicKey used to be []byte, which YAML cannot decode from a multi-line PEM
+// string (it would need a !!binary/base64 value), so JWT provider configs
+// failed to load. It is now a string. hugr loads this config via yaml, and a
+// string field parses identically across yaml.v2/v3 and JSON.
+func TestJwtConfig_YAML_PublicKeyBlockScalar(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("issuer: https://issuer.example\npublic-key: |\n")
+	for line := range strings.SplitSeq(strings.TrimRight(rsaPubKey, "\n"), "\n") {
+		b.WriteString("  ")
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+
+	var cfg JwtConfig
+	if err := yaml.Unmarshal([]byte(b.String()), &cfg); err != nil {
+		t.Fatalf("unmarshal JwtConfig from YAML: %v", err)
+	}
+	if cfg.Issuer != "https://issuer.example" {
+		t.Fatalf("issuer = %q, want https://issuer.example", cfg.Issuer)
+	}
+	if strings.TrimSpace(cfg.PublicKey) != strings.TrimSpace(rsaPubKey) {
+		t.Fatalf("public key not parsed from YAML block scalar")
+	}
+	if _, err := NewJwt(&cfg); err != nil {
+		t.Fatalf("NewJwt with YAML-loaded public key: %v", err)
+	}
+}
+
+// Cluster deployments may deliver the public key base64-encoded (config
+// serialized between nodes, a Kubernetes secret, an env var) rather than as a
+// raw PEM string. parsePublicKey must accept both.
+func TestJwtConfig_PublicKey_Base64Delivered(t *testing.T) {
+	cases := map[string]*base64.Encoding{
+		"std": base64.StdEncoding,
+		"raw": base64.RawStdEncoding,
+	}
+	for name, enc := range cases {
+		t.Run(name, func(t *testing.T) {
+			cfg := JwtConfig{Issuer: "https://issuer.example", PublicKey: enc.EncodeToString([]byte(rsaPubKey))}
+			if _, err := NewJwt(&cfg); err != nil {
+				t.Fatalf("NewJwt with %s-base64 public key: %v", name, err)
+			}
+		})
+	}
+	// Raw PEM must still work.
+	if _, err := NewJwt(&JwtConfig{Issuer: "https://issuer.example", PublicKey: rsaPubKey}); err != nil {
+		t.Fatalf("NewJwt with PEM public key: %v", err)
+	}
+}
 
 func TestJwtProvider_Authenticate(t *testing.T) {
 	tests := []struct {
