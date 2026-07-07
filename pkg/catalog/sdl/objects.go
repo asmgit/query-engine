@@ -168,10 +168,11 @@ type sqlBuilder interface {
 
 func (info *Object) ApplyArguments(ctx context.Context, defs base.DefinitionsSource, args map[string]any, builder sqlBuilder, contextVars map[string]any) (err error) {
 	if !info.HasArguments() {
-		// A view without @args can still embed context placeholders
-		// ([$auth.*]) directly in its @view(sql:) template; resolve those even
-		// though there is no argument input type to iterate.
-		if info.sql != "" && sqlHasContextPlaceholder(info.sql) {
+		// A view without @args can still embed context placeholders ([$auth.*])
+		// directly in its @view(sql:) template; resolve those even though there
+		// is no argument input type to iterate. For a plain table info.sql is
+		// empty, so this is a no-op.
+		if info.sql != "" {
 			return info.substituteContextPlaceholders(builder, contextVars)
 		}
 		return nil
@@ -201,6 +202,13 @@ func (info *Object) ApplyArguments(ctx context.Context, defs base.DefinitionsSou
 			}
 			placeholder := base.DirectiveArgString(d, base.ArgValue)
 			val := contextVars[placeholder]
+			// An empty server-injected value (nil/""/0 — e.g. an unauthenticated
+			// request or a non-numeric user id for [$auth.user_id_int]) becomes
+			// NULL, so "col = [$auth.*]" matches nothing instead of matching 0/''.
+			// Client-provided args below are left as-is (a client 0 means 0).
+			if IsEmptyContextValue(val) {
+				val = nil
+			}
 			if info.sql != "" {
 				sv, sverr := builder.SQLValue(val)
 				if sverr != nil {
@@ -265,7 +273,15 @@ func (info *Object) substituteContextPlaceholders(builder sqlBuilder, contextVar
 		if !strings.Contains(info.sql, placeholder) {
 			continue
 		}
-		sv, sverr := builder.SQLValue(contextVars[placeholder])
+		// An empty context value (nil, "", or 0 — an unauthenticated request, or
+		// a non-numeric/absent user id for [$auth.user_id_int]) renders as NULL,
+		// so a "col = [$auth.*]" predicate matches nothing instead of silently
+		// matching col = 0. Mirrors the function/@arg_default path.
+		value := contextVars[placeholder]
+		if IsEmptyContextValue(value) {
+			value = nil
+		}
+		sv, sverr := builder.SQLValue(value)
 		if sverr != nil {
 			return ErrorPosf(info.def.Position, "wrong context value for placeholder %s: %s", placeholder, sverr.Error())
 		}
@@ -292,7 +308,8 @@ func inputHasArgDefault(def *ast.Definition) bool {
 }
 
 // sqlHasContextPlaceholder returns true if the SQL string contains any known
-// context placeholder ([$auth.*], [$catalog]).
+// context placeholder (the whitelisted [$auth.*] set). [$catalog] is resolved
+// separately by Object.SQL(), so it is intentionally not detected here.
 func sqlHasContextPlaceholder(sql string) bool {
 	if sql == "" {
 		return false
