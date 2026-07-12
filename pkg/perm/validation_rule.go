@@ -30,8 +30,10 @@ func (r *PermissionFieldRule) EnterField(ctx *validator.WalkContext, parentDef *
 	// can never name a data object, so skip the permission scan for them (most
 	// selected fields are scalars).
 	if field.Definition != nil {
-		if rt := field.Definition.Type.Name(); !sdl.IsScalarType(rt) && checker.DataObjectDisabled(rt, OpQuery) {
-			return gqlerror.List{gqlerror.WrapIfUnwrapped(auth.ErrForbidden)}
+		if rt := field.Definition.Type.Name(); !sdl.IsScalarType(rt) {
+			if def := ctx.Provider.ForName(ctx.Context, rt); def != nil && sdl.IsDataObject(def) && checker.DataObjectDisabled(rt, OpQuery) {
+				return gqlerror.List{gqlerror.WrapIfUnwrapped(auth.ErrForbidden)}
+			}
 		}
 	}
 	return nil
