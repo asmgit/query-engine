@@ -108,12 +108,6 @@ type DBInfo struct {
 	Type     string         `json:"type"` // e.g., "mysql", "postgres", "duckdb", "memory", etc.
 	SchemaInfo []DBSchemaInfo `json:"schemas"`
 
-	// DefaultSchema is the schema the data source connection is scoped to
-	// (e.g. the database from a MySQL connection string). Objects in it are
-	// exposed without a schema module and without a schema prefix in type
-	// names, the same way as "public" (PostgreSQL) and "main" (DuckDB).
-	DefaultSchema string `json:"default_schema,omitempty"`
-
 	// Catalog fields, populated by Build().
 	opts     compiler.Options
 	provider *static.DocProvider
@@ -139,9 +133,6 @@ func (s *DBInfo) Build(ctx context.Context, engine engines.Engine, opts compiler
 func (s *DBInfo) contentHash() string {
 	h := sha256.New()
 	fmt.Fprintf(h, "db:%s\n", s.Type)
-	if s.DefaultSchema != "" {
-		fmt.Fprintf(h, "default_schema:%s\n", s.DefaultSchema)
-	}
 
 	schemas := make([]DBSchemaInfo, len(s.SchemaInfo))
 	copy(schemas, s.SchemaInfo)
@@ -282,7 +273,7 @@ func (s *DBInfo) schemaDocument(_ context.Context) (*ast.SchemaDocument, error) 
 	doc := &ast.SchemaDocument{}
 
 	for _, schema := range s.SchemaInfo {
-		defs, err := schema.Definitions(s.DefaultSchema)
+		defs, err := schema.Definitions()
 		if err != nil {
 			return nil, err
 		}
@@ -292,11 +283,11 @@ func (s *DBInfo) schemaDocument(_ context.Context) (*ast.SchemaDocument, error) 
 	return doc, nil
 }
 
-func (s *DBSchemaInfo) Definitions(defaultSchema string) (ast.DefinitionList, error) {
+func (s *DBSchemaInfo) Definitions() (ast.DefinitionList, error) {
 	var defs ast.DefinitionList
 
 	for _, table := range s.Tables {
-		def, err := table.Definition(defaultSchema)
+		def, err := table.Definition()
 		if err != nil {
 			return nil, err
 		}
@@ -307,7 +298,7 @@ func (s *DBSchemaInfo) Definitions(defaultSchema string) (ast.DefinitionList, er
 	}
 
 	for _, view := range s.Views {
-		def, err := view.Definition(defaultSchema)
+		def, err := view.Definition()
 		if err != nil {
 			return nil, err
 		}
@@ -320,13 +311,13 @@ func (s *DBSchemaInfo) Definitions(defaultSchema string) (ast.DefinitionList, er
 	return defs, nil
 }
 
-func (t *DBTableInfo) Definition(defaultSchema string) (*ast.Definition, error) {
+func (t *DBTableInfo) Definition() (*ast.Definition, error) {
 	if len(t.Columns) == 0 {
 		return nil, nil // No columns, no definition
 	}
 	name := dataObjectName(t.SchemaName, t.Name)
-	hasModule := hasSchemaModule(t.SchemaName, defaultSchema)
-	typeName := identGraphQL(rawObjectName(t.SchemaName, t.Name, defaultSchema))
+	hasModule := hasSchemaModule(t.SchemaName)
+	typeName := identGraphQL(rawObjectName(t.SchemaName, t.Name))
 
 	def := &ast.Definition{
 		Name:        typeName,
@@ -484,13 +475,13 @@ func (t *DBTableInfo) Definition(defaultSchema string) (*ast.Definition, error) 
 	return def, nil
 }
 
-func (v *DBViewInfo) Definition(defaultSchema string) (*ast.Definition, error) {
+func (v *DBViewInfo) Definition() (*ast.Definition, error) {
 	if len(v.Columns) == 0 {
 		return nil, nil // No columns, no definition
 	}
 	name := dataObjectName(v.SchemaName, v.Name)
-	hasModule := hasSchemaModule(v.SchemaName, defaultSchema)
-	typeName := identGraphQL(rawObjectName(v.SchemaName, v.Name, defaultSchema))
+	hasModule := hasSchemaModule(v.SchemaName)
+	typeName := identGraphQL(rawObjectName(v.SchemaName, v.Name))
 
 	def := &ast.Definition{
 		Name:        typeName,
@@ -666,10 +657,8 @@ var skipSchemaModules = map[string]bool{
 }
 
 // hasSchemaModule returns true if the schema creates a GraphQL module.
-// The connection default schema behaves like the engine default schemas
-// listed in skipSchemaModules.
-func hasSchemaModule(schema, defaultSchema string) bool {
-	if schema == "" || schema == defaultSchema {
+func hasSchemaModule(schema string) bool {
+	if schema == "" {
 		return false
 	}
 	_, skip := skipSchemaModules[schema]
@@ -677,8 +666,8 @@ func hasSchemaModule(schema, defaultSchema string) bool {
 }
 
 // rawObjectName returns the unquoted schema.name for GraphQL type name generation.
-func rawObjectName(schema, name, defaultSchema string) string {
-	if schema == "" || schema == defaultSchema {
+func rawObjectName(schema, name string) string {
+	if schema == "" {
 		return name
 	}
 	if _, ok := skipSchemaModules[schema]; ok {
