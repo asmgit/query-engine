@@ -161,11 +161,24 @@ func typeResolver(ctx context.Context, provider catalog.Provider, typeDef *ast.T
 					if _, ok := p.Visible(def.Name, f.Name); !ok {
 						continue
 					}
-					// hide fields returning a hidden data object (table-level rule);
-					// scalar return types can never name a data object, so skip
-					// the permission scan for them
-					if tn := f.Type.Name(); !sdl.IsScalarType(tn) && p.DataObjectHidden(tn) {
-						continue
+					// Hide a field when the data object it ultimately resolves to is
+					// hidden or disabled for the role, so the introspected schema
+					// matches actual access. Aggregation/bucket entrypoints return a
+					// wrapper type — resolve the underlying base query field's data
+					// object instead. Wrapper return types themselves (module-query,
+					// aggregation) are never hidden, so a data-object:query "*" rule
+					// cannot hide the module field.
+					if tn := f.Type.Name(); !sdl.IsScalarType(tn) {
+						checkType := tn
+						if baseName, _ := sdl.AggregatedQueryFieldName(f); baseName != "" {
+							if bf := def.Fields.ForName(baseName); bf != nil {
+								checkType = bf.Type.Name()
+							}
+						}
+						if rt := provider.ForName(ctx, checkType); rt != nil && sdl.IsDataObject(rt) &&
+							(p.DataObjectHidden(checkType) || p.DataObjectDisabled(checkType, perm.OpQuery)) {
+							continue
+						}
 					}
 					if _, ok := p.Enabled(def.Name, f.Name); !ok {
 						continue
