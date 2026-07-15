@@ -7,22 +7,22 @@ import (
 	"github.com/vektah/gqlparser/v2/ast"
 )
 
-func TestHasSchemaModule(t *testing.T) {
+func TestIsDefaultSchema(t *testing.T) {
 	tests := []struct {
 		schema        string
 		defaultSchema string
 		want          bool
 	}{
-		{"public", "", false},
-		{"main", "", false},
-		{"crm", "", true},
-		{"crm", "crm", false},
-		{"audit", "crm", true},
-		{"", "crm", false},
+		{"public", "", true},
+		{"main", "", true},
+		{"crm", "", false},
+		{"crm", "crm", true},
+		{"audit", "crm", false},
+		{"", "crm", true},
 	}
 	for _, tt := range tests {
-		if got := hasSchemaModule(tt.schema, tt.defaultSchema); got != tt.want {
-			t.Errorf("hasSchemaModule(%q, %q) = %v, want %v", tt.schema, tt.defaultSchema, got, tt.want)
+		if got := isDefaultSchema(tt.schema, tt.defaultSchema); got != tt.want {
+			t.Errorf("isDefaultSchema(%q, %q) = %v, want %v", tt.schema, tt.defaultSchema, got, tt.want)
 		}
 	}
 }
@@ -52,8 +52,24 @@ func TestSchemaDocumentDefaultSchema(t *testing.T) {
 		InfoName: "crm_db",
 		Type:     "mysql",
 		SchemaInfo: []DBSchemaInfo{
-			{Name: "crm", Tables: []DBTableInfo{{Name: "clients", SchemaName: "crm", Columns: cols}}},
-			{Name: "audit", Tables: []DBTableInfo{{Name: "logs", SchemaName: "audit", Columns: cols}}},
+			{Name: "crm", Tables: []DBTableInfo{{
+				Name: "clients", SchemaName: "crm", Columns: cols,
+				Constraints: []DBConstraintInfo{{
+					Name: "clients_log_fk", Type: "FOREIGN KEY",
+					Columns:          []string{"id"},
+					ReferencesSchema: "audit", ReferencesTable: "logs",
+					ReferencesColumns: []string{"id"},
+				}},
+			}}},
+			{Name: "audit", Tables: []DBTableInfo{{
+				Name: "logs", SchemaName: "audit", Columns: cols,
+				Constraints: []DBConstraintInfo{{
+					Name: "logs_client_fk", Type: "FOREIGN KEY",
+					Columns:          []string{"id"},
+					ReferencesSchema: "crm", ReferencesTable: "clients",
+					ReferencesColumns: []string{"id"},
+				}},
+			}}},
 		},
 		DefaultSchema: "crm",
 	}
@@ -78,6 +94,13 @@ func TestSchemaDocumentDefaultSchema(t *testing.T) {
 	if got := def.Directives.ForName("table").Arguments.ForName("name").Value.Raw; got != "crm.clients" {
 		t.Errorf("@table(name:) must stay schema-qualified, got %q", got)
 	}
+	// FK from the default schema to a non-default schema: references_name must
+	// be the generated GraphQL type name of the target.
+	if ref := def.Directives.ForName("references"); ref == nil {
+		t.Errorf("default schema table must keep its @references directive")
+	} else if got := ref.Arguments.ForName("references_name").Value.Raw; got != "audit_logs" {
+		t.Errorf("@references(references_name:) = %q, want %q", got, "audit_logs")
+	}
 
 	def, ok = byName["audit_logs"]
 	if !ok {
@@ -85,6 +108,13 @@ func TestSchemaDocumentDefaultSchema(t *testing.T) {
 	}
 	if m := def.Directives.ForName("module"); m == nil || m.Arguments.ForName("name").Value.Raw != "audit" {
 		t.Errorf("non-default schema table must keep its @module(name: \"audit\") directive")
+	}
+	// FK to a default schema table: references_name must be the unprefixed
+	// GraphQL type name, not the schema-qualified data object name.
+	if ref := def.Directives.ForName("references"); ref == nil {
+		t.Errorf("non-default schema table must keep its @references directive")
+	} else if got := ref.Arguments.ForName("references_name").Value.Raw; got != "clients" {
+		t.Errorf("@references(references_name:) = %q, want %q", got, "clients")
 	}
 }
 

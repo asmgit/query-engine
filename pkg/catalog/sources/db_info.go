@@ -325,7 +325,7 @@ func (t *DBTableInfo) Definition(defaultSchema string) (*ast.Definition, error) 
 		return nil, nil // No columns, no definition
 	}
 	name := dataObjectName(t.SchemaName, t.Name)
-	hasModule := hasSchemaModule(t.SchemaName, defaultSchema)
+	hasModule := !isDefaultSchema(t.SchemaName, defaultSchema)
 	typeName := identGraphQL(rawObjectName(t.SchemaName, t.Name, defaultSchema))
 
 	def := &ast.Definition{
@@ -435,7 +435,11 @@ func (t *DBTableInfo) Definition(defaultSchema string) (*ast.Definition, error) 
 					&ast.Argument{
 						Name: "references_name",
 						Value: &ast.Value{
-							Raw:      dataObjectName(constraint.ReferencesSchema, constraint.ReferencesTable),
+							// references_name is resolved by the compiler as a
+							// GraphQL type name, so it must be generated the same
+							// way as table/view type names (not as the SQL-quoted
+							// data object name).
+							Raw:      identGraphQL(rawObjectName(constraint.ReferencesSchema, constraint.ReferencesTable, defaultSchema)),
 							Kind:     ast.StringValue,
 							Position: base.CompiledPos("self-described-foreign-key"),
 						},
@@ -489,7 +493,7 @@ func (v *DBViewInfo) Definition(defaultSchema string) (*ast.Definition, error) {
 		return nil, nil // No columns, no definition
 	}
 	name := dataObjectName(v.SchemaName, v.Name)
-	hasModule := hasSchemaModule(v.SchemaName, defaultSchema)
+	hasModule := !isDefaultSchema(v.SchemaName, defaultSchema)
 	typeName := identGraphQL(rawObjectName(v.SchemaName, v.Name, defaultSchema))
 
 	def := &ast.Definition{
@@ -665,23 +669,18 @@ var skipSchemaModules = map[string]bool{
 	"main":   true,
 }
 
-// hasSchemaModule returns true if the schema creates a GraphQL module.
-// The connection default schema behaves like the engine default schemas
-// listed in skipSchemaModules.
-func hasSchemaModule(schema, defaultSchema string) bool {
-	if schema == "" || schema == defaultSchema {
-		return false
-	}
-	_, skip := skipSchemaModules[schema]
-	return !skip
+// isDefaultSchema reports whether the schema's objects are exposed without
+// a GraphQL module and without a schema prefix in type names. That is the
+// case for the engine default schemas (skipSchemaModules) and for the
+// connection default schema of the data source (e.g. the database from a
+// MySQL connection string).
+func isDefaultSchema(schema, defaultSchema string) bool {
+	return schema == "" || schema == defaultSchema || skipSchemaModules[schema]
 }
 
 // rawObjectName returns the unquoted schema.name for GraphQL type name generation.
 func rawObjectName(schema, name, defaultSchema string) string {
-	if schema == "" || schema == defaultSchema {
-		return name
-	}
-	if _, ok := skipSchemaModules[schema]; ok {
+	if isDefaultSchema(schema, defaultSchema) {
 		return name
 	}
 	return schema + "." + name
